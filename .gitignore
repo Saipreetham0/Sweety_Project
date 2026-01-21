@@ -1,0 +1,14 @@
+# Backend
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/data/
+
+# Frontend (Standard Next.js ignored are usually in frontend/.gitignore, but adding here just in case)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# System
+.DS_Store
+*.log
