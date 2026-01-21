@@ -3,6 +3,7 @@
 services:
   backend:
     build: ./backend
+    image: resume-ai-backend
     container_name: resume-ai-backend
     ports:
       - "8000:8000"
@@ -13,6 +14,7 @@ services:
 
   frontend:
     build: ./frontend
+    image: resume-ai-frontend
     container_name: resume-ai-frontend
     ports:
       - "3000:3000"
