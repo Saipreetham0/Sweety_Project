@@ -54,10 +54,17 @@ docker-compose up --build
 *Access dashboard at [http://localhost:3000](http://localhost:3000).*
 
 ### 2. Standard Launch (Local Script)
-If you have Python and Node installed locally:
+**Mac/Linux:**
 ```bash
 ./start_app.sh
 ```
+
+**Windows:**
+Double-click `start_app.bat` or run:
+```cmd
+start_app.bat
+```
+*(This will open two new command windows for Backend and Frontend. Close them to stop.)*
 
 ### 3. Manual Installation
 **Backend** (Requires Python 3.10+):
