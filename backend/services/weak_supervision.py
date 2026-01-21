@@ -3,8 +3,8 @@ class WeakSupervision:
     def apply_heuristics(text: str) -> dict:
         heuristics = {
             "uses_ai_phrases": WeakSupervision._check_ai_phrases(text),
+            "has_template_structure": WeakSupervision._check_structure(text),
             "perfect_grammar": False, # Placeholder
-            "uniform_structure": False # Placeholder
         }
         return heuristics
 
@@ -29,3 +29,23 @@ class WeakSupervision:
             if phrase in text_lower:
                 return True
         return False
+
+    @staticmethod
+    def _check_structure(text: str) -> bool:
+        # Check for standard template headers in a typical order
+        # Many AI models output: Summary -> Skills -> Experience -> Education
+        text_lower = text.lower()
+        required_sections = [
+            ["professional summary", "summary", "objective"],
+            ["skills", "core competencies", "technical skills"],
+            ["experience", "work history", "employment"],
+            ["education", "academic background"]
+        ]
+        
+        found_count = 0
+        for section_group in required_sections:
+            if any(header in text_lower for header in section_group):
+                found_count += 1
+        
+        # If all 4 key sections are present, it might be a standard template (weak signal)
+        return found_count == 4

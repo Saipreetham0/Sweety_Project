@@ -2,6 +2,7 @@ from services.extraction import TextExtractor
 from services.preprocessing import TextPreprocessor
 from services.weak_supervision import WeakSupervision
 from services.model import ResumeModel
+from fastapi import APIRouter, HTTPException
 import os
 
 router = APIRouter(prefix="/analyze", tags=["analyze"])
