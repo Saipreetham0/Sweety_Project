@@ -35,5 +35,11 @@ async def analyze_resume(filename: str):
         "is_ai_generated": result["is_ai_generated"],
         "confidence": result["confidence"],
         "explanation": result["reasons"],
-        "raw_heuristics": heuristics
+        "explanation": result["reasons"],
+        "raw_heuristics": heuristics,
+        "features": result.get("features", {}),
+        "debug_info": {
+            "extracted_text_preview": text[:500] + "..." if len(text) > 500 else text,
+            "preprocessed_text_preview": clean_text[:500] + "..." if len(clean_text) > 500 else clean_text
+        }
     }

@@ -114,9 +114,36 @@ export default function Home() {
                 </div>
               )}
             </div>
+
+
+            {/* Preprocessing Debug Information */}
+            {result.debug_info && (
+              <div className="mt-6 pt-6 border-t border-slate-200">
+                <details className="text-sm text-slate-500 cursor-pointer group">
+                  <summary className="font-semibold text-slate-700 hover:text-slate-900 list-none flex items-center gap-2">
+                    <span className="transform group-open:rotate-90 transition-transform">▸</span>
+                    View Preprocessing Steps
+                  </summary>
+                  <div className="mt-3 space-y-4">
+                    <div className="p-3 bg-slate-100 rounded border border-slate-200">
+                      <h4 className="font-bold text-xs uppercase tracking-wide text-slate-500 mb-1">1. Extracted Text (Raw)</h4>
+                      <p className="font-mono text-xs whitespace-pre-wrap max-h-40 overflow-y-auto">
+                        {result.debug_info.extracted_text_preview}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-slate-100 rounded border border-slate-200">
+                      <h4 className="font-bold text-xs uppercase tracking-wide text-slate-500 mb-1">2. Preprocessed Text (Cleaned)</h4>
+                      <p className="font-mono text-xs whitespace-pre-wrap max-h-40 overflow-y-auto">
+                        {result.debug_info.preprocessed_text_preview}
+                      </p>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            )}
           </div>
         )}
       </div>
-    </main>
+    </main >
   )
 }
