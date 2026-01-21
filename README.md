@@ -38,18 +38,28 @@ The analysis engine is built on a modular microservices architecture:
 -   **UI Library**: Shadcn UI + Tailwind CSS for a professional, responsive dashboard.
 -   **Visualization**: Real-time display of Confidence Scores and Explanation factors.
 
+### **Deployment (Docker)**
+-   **Containerization**: Full support for Docker & Docker Compose to ensure identical environments (Python 3.10 + Node 18) across all machines.
+-   **Reproducibility**: `backend/Dockerfile` locks all ML dependencies including Spacy models.
+
 ---
 
 ## 🚀 Quick Start
 
-### 1. One-Click Launch
-The easiest way to run the full stack (Frontend + Backend):
+### 1. One-Click Launch (Docker) - Recommended for New Systems
+This handles all dependencies (Python, Node, Spacy) automatically.
+```bash
+docker-compose up --build
+```
+*Access dashboard at [http://localhost:3000](http://localhost:3000).*
+
+### 2. Standard Launch (Local Script)
+If you have Python and Node installed locally:
 ```bash
 ./start_app.sh
 ```
-*Access the dashboard at [http://localhost:3000](http://localhost:3000).*
 
-### 2. Manual Installation
+### 3. Manual Installation
 **Backend** (Requires Python 3.10+):
 ```bash
 cd backend
