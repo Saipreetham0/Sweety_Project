@@ -108,3 +108,8 @@ When you analyze a resume, the system provides a **Confidence Score (0% - 100%)*
 -   **Adversarial Training**: Train the model against paraphrased AI text (e.g., Quillbot).
 -   **Visual Layout Analysis**: Use Computer Vision (ResNet) to detect visual template matches.
 -   **Vector Embeddings**: Use `all-MiniLM-L6-v2` to cluster resumes by semantic content.
+
+---
+
+## 📋 Requirements
+For a detailed list of hardware, software, and functional requirements, please refer to the [System Requirements Specification (SRS)](REQUIREMENTS.md).

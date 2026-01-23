@@ -1,104 +1,73 @@
-# Resume AI Detector - Architecture Diagram
+# Research-Grade AI Resume Detector - Architecture
 
-This document outlines the high-level architecture of the Resume AI Detector application.
+This document outlines the architectural design of the **AI Resume Detector**, adhering to the modular software engineering principles required for the M.Tech dissertation.
 
-## High-Level Overview
+## High-Level Architecture Flow
 
-The application is composed of a **Next.js Frontend** for user interaction and a **FastAPI Backend** that handles file processing and AI analysis. The backend leverages several internal services for text extraction, preprocessing, feature engineering, and model inference.
-
-## Architecture Diagram
+The system follows a linear data processing pipeline designed for high accuracy and explainability.
 
 ```mermaid
 graph TD
-    subgraph Client ["Client Side"]
-        Browser["User Browser"]
-    end
+    %% Define Nodes
+    User(("User"))
+    UI["User Interface Module<br/>(Frontend/Next.js)"]
+    Input["Resume Input Module<br/>(File Upload API)"]
+    Extract["Text Extraction & Preprocessing Module<br/>(OCR/Text Parsing)"]
+    WeakSup["Weak Supervision Module<br/>(Heuristics/Rules)"]
+    Features["Feature Extraction Module<br/>(Stylometry/Perplexity)"]
+    HybridML["Hybrid Machine Learning Module<br/>(Decision Logic)"]
+    Storage["Result Storage & Explanation Module<br/>(Response Handler)"]
 
-    subgraph Frontend ["Frontend Container (Next.js)"]
-        NextServer["Next.js Server"]
-        UI["React UI Components"]
-    end
+    %% Define Flow
+    User -->|Interacts| UI
+    UI -->|Upload Resume| Input
+    Input -->|Raw File| Extract
+    Extract -->|Clean Text| WeakSup
+    WeakSup -->|Text + Heuristic Signals| Features
+    Features -->|Feature Vector| HybridML
+    HybridML -->|Final Classification| Storage
+    Storage -->|JSON Result| UI
 
-    subgraph Backend ["Backend Container (FastAPI)"]
-        API["FastAPI App (main.py)"]
-        
-        subgraph Routers ["API Routers"]
-            UploadRouter["/upload (upload.py)"]
-            AnalyzeRouter["/analyze (analyze.py)"]
-        end
-        
-        subgraph Services ["AI Services Layer"]
-            Extraction["Text Extraction (extraction.py)"]
-            Preprocessing["Preprocessing (preprocessing.py)"]
-            Features["Feature Eng. (features.py)"]
-            Model["AI Model (model.py)"]
-            WeakSup["Weak Supervision (weak_supervision.py)"]
-        end
-        
-        subgraph Storage ["Local Storage (Volumes)"]
-            UploadsDir["/app/uploads"]
-            DataDir["/app/data"]
-        end
-    end
+    %% Styles
+    classDef module fill:#e1f5fe,stroke:#01579b,stroke-width:2px,rx:5,ry:5;
+    classDef actor fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
 
-    %% Client Interactions
-    Browser -->|HTTP/HTTPS| UI
-    UI -->|API Requests| NextServer
-    NextServer -->|Proxy/Direct| API
-
-    %% API Routing
-    API --> UploadRouter
-    API --> AnalyzeRouter
-
-    %% Upload Flow
-    UploadRouter -->|Save File| UploadsDir
-    
-    %% Analysis Flow
-    AnalyzeRouter -->|Trigger Analysis| Services
-    
-    %% Service Logic
-    Services --> Extraction
-    Extraction -->|Read File| UploadsDir
-    Extraction --> Preprocessing
-    Preprocessing --> Features
-    Features --> Model
-    Model -->|Load Artifacts| DataDir
-    Services -->|Return Results| AnalyzeRouter
-
-    %% Styling
-    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
-    classDef backend fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
-    classDef storage fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
-    classDef client fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
-
-    class UI,NextServer frontend;
-    class API,UploadRouter,AnalyzeRouter,Extraction,Preprocessing,Features,Model,WeakSup backend;
-    class UploadsDir,DataDir storage;
-    class Browser client;
+    class UI,Input,Extract,WeakSup,Features,HybridML,Storage module;
+    class User actor;
 ```
 
-## Component Description
+---
 
-### 1. Frontend (Next.js)
-- **Role**: Provides the user interface for uploading resumes and viewing analysis results.
-- **Tech Stack**: Next.js 16, React 19, Tailwind CSS.
-- **Port**: 3000.
+## Module Descriptions
 
-### 2. Backend (FastAPI)
-- **Role**: Exposes REST API endpoints to handle resume uploads and run AI inference.
-- **Tech Stack**: FastAPI, Torch, Transformers, Scikit-learn.
-- **Port**: 8000.
+### 1. User Interface Module (Frontend)
+-   **Function**: Acts as the presentation layer. It allows users to drag-and-drop resumes and view the "Human vs AI" analysis results with detailed charts.
+-   **Technology**: Next.js 16, React, Tailwind CSS.
 
-#### Key Modules:
-- **Routers**:
-    - `upload.py`: Handles file upload and validation.
-    - `analyze.py`: Orchestrates the analysis pipeline.
-- **Services**:
-    - `extraction.py`: Extracts raw text from PDF and DOCX files.
-    - `preprocessing.py`: Cleans and normalizes text data.
-    - `features.py`: Generates numerical features from text for the model.
-    - `model.py`: Loads the trained model and performs inference.
+### 2. Resume Input Module
+-   **Function**: Handles the secure transmission of file data from the client to the server. Validates file types (PDF/DOCX) and ensures data integrity.
+-   **Component**: `routers/upload.py`
 
-### 3. Data Storage
-- **Uploads**: ephemeral storage for uploaded documents (`/backend/uploads`).
-- **Data**: persistant storage for model weights, configuration, and potentially training data (`/backend/data`).
+### 3. Text Extraction & Preprocessing Module
+-   **Function**: 
+    1.  **Extraction**: Converts binary PDF/DOCX data into raw string format.
+    2.  **Preprocessing**: Normalizes text by removing stop words, special characters, and excessive whitespace to prepare it for NLP analysis.
+-   **Component**: `services/extraction.py`, `services/preprocessing.py`
+
+### 4. Weak Supervision Module
+-   **Function**: Applies specific heuristic constraints (rules) to label data without manual tagging. This includes detecting known "AI phrases" (e.g., "delve into") and rigid template structures.
+-   **Component**: `services/weak_supervision.py`
+
+### 5. Feature Extraction Module
+-   **Function**: Transforms text into numerical vectors.
+    -   **Stylometric Features**: Burstiness, Sentence Length Deviation.
+    -   **Perplexity**: Uses **DistilGPT2** to measure how "surprised" a standard LLM is by the text (Low surprise = AI).
+-   **Component**: `services/features.py`
+
+### 6. Hybrid Machine Learning Module
+-   **Function**: The core decision-making engine. It aggregates signals from the Weak Supervision module and the Feature Extraction module to produce a final confidence score.
+-   **Component**: `services/model.py`
+
+### 7. Result Storage & Explanation Module
+-   **Function**: Formats the classification results into a standard JSON response, providing specific "reasons" for the decision to ensure explainability (XAI).
+-   **Component**: `routers/analyze.py` (Response Construction)
