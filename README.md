@@ -113,3 +113,6 @@ When you analyze a resume, the system provides a **Confidence Score (0% - 100%)*
 
 ## 📋 Requirements
 For a detailed list of hardware, software, and functional requirements, please refer to the [System Requirements Specification (SRS)](REQUIREMENTS.md).
+
+## ❓ Research Methodology Q&A
+For answers to specific research questions (Input Data, Labeling, Weak Supervision, etc.), please see the [Project Q&A Document](PROJECT_QnA.md).
