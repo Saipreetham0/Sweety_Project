@@ -26,6 +26,9 @@ This system goes beyond simple keyword matching by implementing a multi-dimensio
 
 ## 🏗 Technical Architecture
 
+For a detailed visual representation of the system components and data flow, please see the [Architecture Diagram](ARCHITECTURE.md).
+
+
 ### **Backend (Python / FastAPI)**
 The analysis engine is built on a modular microservices architecture:
 -   **Core**: `FastAPI` for high-performance async API.
