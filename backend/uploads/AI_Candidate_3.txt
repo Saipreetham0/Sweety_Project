@@ -1,0 +1,14 @@
+Name: AI_Candidate_3
+Role: Product Manager
+
+Professional Summary:
+As a meticulously crafted Product Manager, I strive to delve into the complex landscape of technology. My career is a testament to my ability to leverage the power of Java.
+
+    Professional Journey:
+    - Orchestrated a tapestry of digital solutions utilizing React.
+    - Navigated the complexities of backend architecture to foster a culture of innovation.
+    - Poised to drive synergistic growth through data-driven paradigms.
+    
+
+Academic Background:
+Degree obtained from City College, underscoring a commitment to excellence.

@@ -29,7 +29,7 @@ _ws    = WeakSupervision()
 
 
 @router.post("/{filename}")
-async def analyze_resume(filename: str):
+def analyze_resume(filename: str):
     file_path = os.path.join(UPLOAD_DIR, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
@@ -47,19 +47,22 @@ async def analyze_resume(filename: str):
     heuristics = _ws.apply_heuristics(clean_text)
 
     # 4. Hybrid ML Prediction
-    result = _model.predict(clean_text, heuristics)
+    # skip_perplexity=True: DistilGPT2 was excluded from training features,
+    # so perplexity doesn't improve RF/XGB predictions and can cause hangs.
+    result = _model.predict(clean_text, heuristics, skip_perplexity=True)
 
     return {
         "filename":                  filename,
         "is_ai_generated":           result["is_ai_generated"],
         "label":                     result.get("label", "human_written"),
         "confidence":                result["confidence"],
-        "explanation":               result["reasons"],   # single key — duplicate bug fixed
+        "explanation":               result["reasons"],
         "matched_ai_phrases":        heuristics.get("matched_ai_phrases", []),
         "matched_template_patterns": heuristics.get("matched_template_patterns", []),
         "raw_heuristics":            heuristics,
         "features":                  result.get("features", {}),
         "feature_importances":       result.get("feature_importances", {}),
+        "model_results":             result.get("model_results", {}),
         "debug_info": {
             "extracted_text_preview":    (text[:500] + "...") if len(text) > 500 else text,
             "preprocessed_text_preview": (clean_text[:500] + "...") if len(clean_text) > 500 else clean_text,

@@ -1,0 +1,14 @@
+Name: Human_Candidate_2
+Role: Data Scientist
+
+Summary:
+I am a Data Scientist with 5 years of experience. I worked on many projects using React and Project Management. I want to solve hard problems and help the team.
+
+    Experience:
+    - Built a web app using Project Management.
+    - Fixed bugs in the production system.
+    - Talked to clients about requirements.
+    
+
+Education:
+BS in CS from Tech Institute.

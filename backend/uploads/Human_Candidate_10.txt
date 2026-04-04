@@ -1,0 +1,14 @@
+Name: Human_Candidate_10
+Role: Software Engineer
+
+Summary:
+I am a Software Engineer with 5 years of experience. I worked on many projects using Java and Project Management. I want to solve hard problems and help the team.
+
+    Experience:
+    - Built a web app using SQL.
+    - Fixed bugs in the production system.
+    - Talked to clients about requirements.
+    
+
+Education:
+BS in CS from State University.

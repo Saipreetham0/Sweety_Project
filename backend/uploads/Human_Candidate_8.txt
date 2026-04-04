@@ -1,0 +1,14 @@
+Name: Human_Candidate_8
+Role: Data Scientist
+
+Summary:
+I am a Data Scientist with 5 years of experience. I worked on many projects using AWS and SQL. I want to solve hard problems and help the team.
+
+    Experience:
+    - Built a web app using React.
+    - Fixed bugs in the production system.
+    - Talked to clients about requirements.
+    
+
+Education:
+BS in CS from State University.

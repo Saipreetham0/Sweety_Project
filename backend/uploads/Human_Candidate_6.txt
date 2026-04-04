@@ -1,0 +1,14 @@
+Name: Human_Candidate_6
+Role: Analyst
+
+Summary:
+I am a Analyst with 5 years of experience. I worked on many projects using SQL and SQL. I want to solve hard problems and help the team.
+
+    Experience:
+    - Built a web app using Project Management.
+    - Fixed bugs in the production system.
+    - Talked to clients about requirements.
+    
+
+Education:
+BS in CS from Tech Institute.

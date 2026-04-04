@@ -8,6 +8,7 @@ Main entry: FeatureExtractor.extract_features(text) -> dict
 
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 from typing import Any, Dict, List
@@ -22,25 +23,32 @@ def _r4(x: float) -> float:
     return float(f"{float(x):.4f}")
 
 # ── Spacy ──────────────────────────────────────────────────────────────────
-try:
-    import spacy as _spacy  # type: ignore[import]
-    _nlp: Any = _spacy.load("en_core_web_sm")
-except Exception:
-    _nlp = None
+# Set SKIP_SPACY=1 to skip loading (used during training to avoid
+# Spacy+XGBoost libomp conflict on macOS).
+_nlp: Any = None
+if not os.environ.get("SKIP_SPACY"):
+    try:
+        import spacy as _spacy  # type: ignore[import]
+        _nlp = _spacy.load("en_core_web_sm")
+    except Exception:
+        _nlp = None
 
 # ── DistilGPT2 ─────────────────────────────────────────────────────────────
 # Declared as Any (not Optional[Any]) so attribute access after a truthiness
 # guard doesn't produce Pyright false positives.
+# Set SKIP_GPT2=1 in the environment to skip loading (used during training).
 _tokenizer: Any = None
 _model: Any = None
-try:
-    import torch  # type: ignore[import]
-    from transformers import GPT2LMHeadModel, GPT2TokenizerFast  # type: ignore[import]
-    _tokenizer = GPT2TokenizerFast.from_pretrained("distilgpt2")
-    _model = GPT2LMHeadModel.from_pretrained("distilgpt2")
-    _model.eval()
-except Exception as _gpt_err:
-    print(f"[features] GPT-2 not available: {_gpt_err}")
+if not os.environ.get("SKIP_GPT2"):
+    try:
+        from transformers import GPT2LMHeadModel, GPT2TokenizerFast  # type: ignore[import]
+        _tokenizer = GPT2TokenizerFast.from_pretrained("distilgpt2")
+        _model = GPT2LMHeadModel.from_pretrained("distilgpt2")
+        _model.eval()
+    except Exception as _gpt_err:
+        print(f"[features] GPT-2 not available: {_gpt_err}")
+else:
+    print("[features] GPT-2 skipped (SKIP_GPT2=1).")
 
 # ── NLTK stopwords (function-word ratio) ───────────────────────────────────
 try:
@@ -69,19 +77,28 @@ class FeatureExtractor:
     """
 
     @staticmethod
-    def extract_features(text: str) -> Dict[str, float]:
+    def extract_features(
+        text: str,
+        skip_perplexity: bool = False,
+        skip_spacy: bool = False,
+    ) -> Dict[str, float]:
+        """
+        skip_perplexity=True : skip DistilGPT2 (used during batch training).
+        skip_spacy=True      : use regex fallback instead of Spacy (avoids
+                               Spacy semaphore-segfault during batch training).
+        """
         if not text or not text.strip():
             return FeatureExtractor._empty_features()
 
         feats: Dict[str, float] = {}
 
-        feats.update(FeatureExtractor._stylometric(text))
+        feats.update(FeatureExtractor._stylometric(text, skip_spacy=skip_spacy))
         feats.update(FeatureExtractor._structural(text))
 
         feats["readability_flesch"] = float(textstat.flesch_reading_ease(text))
         feats["readability_fog"]    = float(textstat.gunning_fog(text))
         feats["reading_time"]       = float(textstat.reading_time(text))
-        feats["perplexity"]         = FeatureExtractor._calculate_perplexity(text)
+        feats["perplexity"]         = 0.0 if skip_perplexity else FeatureExtractor._calculate_perplexity(text)
 
         feats.update(FeatureExtractor._informal_signals(text))
 
@@ -96,7 +113,7 @@ class FeatureExtractor:
     # ──────────────────────────────────────────────────────────────────── #
 
     @staticmethod
-    def _stylometric(text: str) -> Dict[str, float]:
+    def _stylometric(text: str, skip_spacy: bool = False) -> Dict[str, float]:
         feats: Dict[str, float] = {}
 
         tokens_raw   = text.split()
@@ -134,7 +151,7 @@ class FeatureExtractor:
         feats["passive_voice_ratio"] = _r4(passive / n_tokens)
 
         # Sentence-level (Spacy or regex fallback)
-        if _nlp:
+        if _nlp and not skip_spacy:
             try:
                 text_chunk: str = text[0:100000]  # type: ignore[index]
                 doc = _nlp(text_chunk)

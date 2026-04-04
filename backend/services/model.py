@@ -1,9 +1,9 @@
 # MODIFIED
 """
-ResumeModel — trains a RandomForest classifier on Dataset A on first run,
-then caches it to backend/models/rf_model.pkl for subsequent requests.
+ResumeModel — trains RandomForest + XGBoost on Dataset A (text files + Excel),
+caches both to disk, and returns ensemble + per-model predictions.
 
-Falls back to a rule-based scorer if the RF model fails.
+Falls back to a rule-based scorer if both ML models fail.
 """
 
 from __future__ import annotations
@@ -24,13 +24,13 @@ if _BACKEND_ROOT not in sys.path:
 
 from services.features import FeatureExtractor
 
-# Pyright-safe rounding helper (same reason as features.py)
 def _r4(x: float) -> float:
     return float(f"{float(x):.4f}")
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-_MODELS_DIR        = os.path.join(_BACKEND_ROOT, "models")
-_MODEL_PATH        = os.path.join(_MODELS_DIR, "rf_model.pkl")
+_MODELS_DIR         = os.path.join(_BACKEND_ROOT, "models")
+_RF_PATH            = os.path.join(_MODELS_DIR, "rf_model.pkl")
+_XGB_PATH           = os.path.join(_MODELS_DIR, "xgb_model.json")   # native XGBoost format
 _FEATURE_NAMES_PATH = os.path.join(_MODELS_DIR, "feature_names.json")
 
 # ── Label encoding ─────────────────────────────────────────────────────────
@@ -41,24 +41,19 @@ _LABEL_MAP: Dict[int, str] = {
 }
 _LABEL_INT: Dict[str, int] = {v: k for k, v in _LABEL_MAP.items()}
 
-# ── Feature thresholds for generating human-readable reasons ───────────────
-# Format: feature_name → (direction, threshold, message)
-# direction: "low" = AI when value < threshold
-#            "high" = AI when value > threshold
-#            "low_zero" = AI when value == 0
+# ── Thresholds for human-readable reasons ──────────────────────────────────
 _THRESHOLDS: Dict[str, Tuple[str, float, str]] = {
-    "type_token_ratio":           ("low",      0.45, "Low lexical diversity (repetitive vocabulary)."),
-    "lexical_richness":           ("low",      0.45, "Low lexical richness detected."),
-    "sentence_length_std":        ("low",      5.0,  "Very uniform sentence lengths (robotic writing flow)."),
-    "avg_sentence_length":        ("high",    22.0,  "Unusually long average sentence length."),
-    "perplexity":                 ("low",     40.0,  "Low neural perplexity — text is highly predictable (AI signal)."),
-    "passive_voice_ratio":        ("high",    0.08,  "High passive voice usage detected."),
-    "adjective_density":          ("high",    0.10,  "High adjective density (over-descriptive AI writing)."),
-    "ai_phrase_match_count":      ("high",    2.0,   "Multiple AI signature phrases matched."),
-    "template_pattern_match_count":("high",   1.0,   "Template placeholder patterns detected."),
-    "first_person_count":         ("low_zero", 0.0,  "No first-person pronouns (impersonal AI writing style)."),
-    "informal_word_count":        ("low_zero", 0.0,  "No informal contractions found (overly formal AI text)."),
-    "readability_flesch":         ("low",     40.0,  "Low Flesch readability score (unnaturally complex sentence structure)."),
+    "type_token_ratio":             ("low",      0.45, "Low lexical diversity (repetitive vocabulary)."),
+    "sentence_length_std":          ("low",      5.0,  "Very uniform sentence lengths (robotic writing flow)."),
+    "avg_sentence_length":          ("high",    22.0,  "Unusually long average sentence length."),
+    "perplexity":                   ("low",     40.0,  "Low neural perplexity — text is highly predictable (AI signal)."),
+    "passive_voice_ratio":          ("high",    0.08,  "High passive voice usage detected."),
+    "adjective_density":            ("high",    0.10,  "High adjective density (over-descriptive AI writing)."),
+    "ai_phrase_match_count":        ("high",    2.0,   "Multiple AI signature phrases matched."),
+    "template_pattern_match_count": ("high",    1.0,   "Template placeholder patterns detected."),
+    "first_person_count":           ("low_zero", 0.0,  "No first-person pronouns (impersonal AI style)."),
+    "informal_word_count":          ("low_zero", 0.0,  "No informal contractions found (overly formal AI text)."),
+    "readability_flesch":           ("low",     40.0,  "Low Flesch readability score (unnaturally complex sentences)."),
 }
 
 
@@ -67,28 +62,33 @@ _THRESHOLDS: Dict[str, Tuple[str, float, str]] = {
 # ────────────────────────────────────────────────────────────────────────────
 
 class ModelTrainer:
-    """Trains a RandomForestClassifier on Dataset A and saves it to disk."""
+    """
+    Trains RandomForestClassifier + XGBClassifier on Dataset A.
+    Saves both models and shared feature_names to disk.
+    """
 
-    def train_and_save(self) -> Tuple[Any, List[str]]:
+    def train_and_save(self) -> Tuple[Any, Any, List[str]]:
+        """Returns (rf_clf, xgb_clf, feature_names)."""
         os.makedirs(_MODELS_DIR, exist_ok=True)
 
-        print("[ModelTrainer] Loading training data from Dataset A...")
+        print("[ModelTrainer] Loading training data...")
         df = self._load_data()
 
         if df.empty or len(df) < 3:
             print("[ModelTrainer] Insufficient data — using synthetic fallback corpus.")
             df = self._synthetic_fallback()
 
-        # Lazy-import WeakSupervision to avoid circular-import risk
+        print(f"[ModelTrainer] Training on {len(df)} resumes "
+              f"({df['label'].value_counts().to_dict()})")
+
+        # Lazy WeakSupervision
         _ws_instance: Any = None
         try:
             from services.weak_supervision import WeakSupervision  # type: ignore[import]
             _ws_instance = WeakSupervision()
         except Exception as e:
-            print(f"[ModelTrainer] WeakSupervision not available: {e}")
-        ws = _ws_instance  # kept as Any; truthiness guard below is safe
+            print(f"[ModelTrainer] WeakSupervision unavailable: {e}")
 
-        print(f"[ModelTrainer] Extracting features from {len(df)} resumes...")
         rows: List[Dict[str, float]] = []
         labels: List[int] = []
 
@@ -103,11 +103,11 @@ class ModelTrainer:
             else:
                 label = "ai_generated"
 
-            feats = FeatureExtractor.extract_features(text)
+            feats = FeatureExtractor.extract_features(text, skip_perplexity=True, skip_spacy=True)
 
-            if ws is not None:
+            if _ws_instance is not None:
                 try:
-                    h = ws.apply_heuristics(text)
+                    h = _ws_instance.apply_heuristics(text)
                     feats["ai_phrase_match_count"]        = float(len(h.get("matched_ai_phrases", [])))
                     feats["template_pattern_match_count"] = float(len(h.get("matched_template_patterns", [])))
                 except Exception:
@@ -120,29 +120,49 @@ class ModelTrainer:
         X = pd.DataFrame(rows, columns=feature_names).fillna(0.0).values
         y = np.array(labels)
 
+        # ── Random Forest ─────────────────────────────────────────────
         from sklearn.ensemble import RandomForestClassifier  # type: ignore[import]
-        from sklearn.model_selection import cross_val_score  # type: ignore[import]
 
-        clf = RandomForestClassifier(
-            n_estimators=100, random_state=42, class_weight="balanced"
+        rf = RandomForestClassifier(
+            n_estimators=200, random_state=42, class_weight="balanced"
         )
-        clf.fit(X, y)
+        rf.fit(X, y)
+        rf_train_acc = float((rf.predict(X) == y).mean())
+        print(f"[ModelTrainer] RF  Train Accuracy: {rf_train_acc:.3f} (n={len(y)})")
 
-        n_splits = min(3, len(X))
-        if n_splits >= 2:
-            scores = cross_val_score(clf, X, y, cv=n_splits, scoring="accuracy")
-            print(f"[ModelTrainer] CV Accuracy: {scores.mean():.3f} ± {scores.std():.3f}")
-        else:
-            print(f"[ModelTrainer] Training accuracy: {clf.score(X, y):.3f}")
+        joblib.dump(rf, _RF_PATH)
 
-        joblib.dump(clf, _MODEL_PATH)
+        # ── XGBoost ───────────────────────────────────────────────────
+        xgb_clf: Any = None
+        try:
+            from xgboost import XGBClassifier  # type: ignore[import]
+
+            xgb_clf = XGBClassifier(
+                n_estimators=200,
+                max_depth=4,
+                learning_rate=0.1,
+                eval_metric="mlogloss",
+                random_state=42,
+                verbosity=0,
+                nthread=1,        # single-threaded — avoids OpenMP segfault on macOS
+                tree_method="hist",
+            )
+            xgb_clf.fit(X, y)
+            xgb_train_acc = float((xgb_clf.predict(X) == y).mean())
+            print(f"[ModelTrainer] XGB Train Accuracy: {xgb_train_acc:.3f} (n={len(y)})")
+
+            xgb_clf.save_model(_XGB_PATH)   # native JSON — no libomp at load time
+            print(f"[ModelTrainer] XGBoost saved → {_XGB_PATH}")
+        except Exception as xgb_err:
+            print(f"[ModelTrainer] XGBoost training failed: {xgb_err}. Will use RF only.")
+
         with open(_FEATURE_NAMES_PATH, "w") as f:
             json.dump(feature_names, f)
 
-        print(f"[ModelTrainer] Model saved → {_MODEL_PATH}")
-        return clf, feature_names
+        print(f"[ModelTrainer] RandomForest saved → {_RF_PATH}")
+        return rf, xgb_clf, feature_names
 
-    # ── Data loading ───────────────────────────────────────────────────
+    # ── Data loading ───────────────────────────────────────────────────────
 
     @staticmethod
     def _load_data() -> pd.DataFrame:
@@ -155,7 +175,6 @@ class ModelTrainer:
 
     @staticmethod
     def _synthetic_fallback() -> pd.DataFrame:
-        """Minimal corpus for zero-shot bootstrapping when Dataset A is absent."""
         human = [
             "I worked at Google for 3 years. I built the payments API using Java. I collaborated daily with my team.",
             "My experience at Microsoft taught me a lot. I can't imagine a better place to grow as an engineer.",
@@ -171,11 +190,11 @@ class ModelTrainer:
         template = [
             "[Company Name] | [Position Title] | [Date Range] References available upon request. Seeking a challenging position in a reputed organization.",
             "I hereby declare that all information provided above is true to the best of my knowledge. [Your Name] [Date]",
-            "Objective: To obtain a challenging position in a reputed organization. References available upon request. [Company Name]",
+            "Objective: To obtain a challenging position in a reputed organization. References available upon request.",
         ]
         records = (
             [{"resume_text": t, "label": "human_written",  "resume_id": f"SYN_H_{i}", "confidence_score": 0.9} for i, t in enumerate(human)] +
-            [{"resume_text": t, "label": "ai_generated",   "resume_id": f"SYN_A_{i}", "confidence_score": 0.9} for i, t in enumerate(ai)] +
+            [{"resume_text": t, "label": "ai_generated",   "resume_id": f"SYN_A_{i}", "confidence_score": 0.9} for i, t in enumerate(ai)]   +
             [{"resume_text": t, "label": "template_based", "resume_id": f"SYN_T_{i}", "confidence_score": 0.9} for i, t in enumerate(template)]
         )
         return pd.DataFrame(records)
@@ -187,93 +206,171 @@ class ModelTrainer:
 
 class ResumeModel:
     """
-    Loads the cached RandomForest model or triggers training on first run.
-    predict() returns a structured dict consumed by analyze.py.
+    Loads cached RF + XGBoost models (trains if absent).
+    predict() returns ensemble + per-model breakdowns.
     """
 
     def __init__(self) -> None:
-        self._clf: Any = None
+        self._rf:  Any = None
+        self._xgb: Any = None
         self._feature_names: List[str] = []
         self._load_or_train()
 
-    # ── Initialization ─────────────────────────────────────────────────
+    # ── Initialization ─────────────────────────────────────────────────────
 
     def _load_or_train(self) -> None:
-        if os.path.exists(_MODEL_PATH) and os.path.exists(_FEATURE_NAMES_PATH):
+        loaded_rf  = False
+        loaded_xgb = False
+
+        if os.path.exists(_RF_PATH) and os.path.exists(_FEATURE_NAMES_PATH):
             try:
-                self._clf = joblib.load(_MODEL_PATH)
+                self._rf = joblib.load(_RF_PATH)
                 with open(_FEATURE_NAMES_PATH) as f:
                     self._feature_names = json.load(f)
-                print("[ResumeModel] Model loaded from cache.")
-                return
+                print("[ResumeModel] RandomForest loaded from cache.")
+                loaded_rf = True
             except Exception as e:
-                print(f"[ResumeModel] Cache load failed ({e}) — retraining...")
+                print(f"[ResumeModel] RF cache load failed: {e}")
 
-        trainer = ModelTrainer()
-        self._clf, self._feature_names = trainer.train_and_save()
+        if os.path.exists(_XGB_PATH):
+            try:
+                from xgboost import XGBClassifier  # type: ignore[import]
+                xgb_tmp = XGBClassifier()
+                xgb_tmp.load_model(_XGB_PATH)      # native JSON — avoids libomp at import
+                self._xgb = xgb_tmp
+                print("[ResumeModel] XGBoost loaded from cache.")
+                loaded_xgb = True
+            except Exception as e:
+                print(f"[ResumeModel] XGB cache load failed: {e}")
 
-    # ── Prediction ─────────────────────────────────────────────────────
+        if not loaded_rf:
+            trainer = ModelTrainer()
+            self._rf, self._xgb, self._feature_names = trainer.train_and_save()
+        elif not loaded_xgb:
+            # RF cached but XGBoost not — retrain both
+            trainer = ModelTrainer()
+            self._rf, self._xgb, self._feature_names = trainer.train_and_save()
 
-    def predict(self, text: str, heuristics: dict) -> dict:
+    # ── Prediction ─────────────────────────────────────────────────────────
+
+    def predict(self, text: str, heuristics: dict, skip_perplexity: bool = False) -> dict:
         try:
-            feats = FeatureExtractor.extract_features(text)
-
-            # Inject heuristic counts into feature vector
+            feats = FeatureExtractor.extract_features(text, skip_perplexity=skip_perplexity, skip_spacy=False)
             feats["ai_phrase_match_count"]        = float(len(heuristics.get("matched_ai_phrases", [])))
             feats["template_pattern_match_count"] = float(len(heuristics.get("matched_template_patterns", [])))
 
-            # Align to training feature order
             X = np.array([[feats.get(name, 0.0) for name in self._feature_names]])
 
-            proba    = self._clf.predict_proba(X)[0]
-            pred_idx = int(np.argmax(proba))
-            confidence = float(proba[pred_idx])
-            label    = _LABEL_MAP.get(pred_idx, "human_written")
-            is_ai    = label in ("ai_generated", "template_based")
+            # ── Random Forest prediction ───────────────────────────────
+            rf_result  = self._predict_single(self._rf,  X, "random_forest")
 
-            # Top-5 feature importances (avoid list[:n] Pyright slice bug)
-            importances: Dict[str, float] = dict(
-                zip(self._feature_names, self._clf.feature_importances_)
-            )
-            sorted_imp = sorted(importances.items(), key=lambda x: x[1], reverse=True)
-            top5: Dict[str, float] = {}
-            for k, v in sorted_imp:
-                if len(top5) >= 5:
-                    break
-                top5[k] = v
+            # ── XGBoost prediction ─────────────────────────────────────
+            xgb_result = self._predict_single(self._xgb, X, "xgboost")
 
-            reasons = self._generate_reasons(feats, heuristics, label)
+            # ── Ensemble (soft vote: average probabilities) ────────────
+            rf_proba  = rf_result.get("_proba",  np.array([0.34, 0.33, 0.33]))
+            xgb_proba = xgb_result.get("_proba", np.array([0.34, 0.33, 0.33]))
+
+            if self._xgb is not None:
+                ensemble_proba = (rf_proba + xgb_proba) / 2.0
+            else:
+                ensemble_proba = rf_proba
+
+            ens_idx    = int(np.argmax(ensemble_proba))
+            ens_conf   = float(ensemble_proba[ens_idx])
+            ens_label  = _LABEL_MAP.get(ens_idx, "human_written")
+            is_ai      = ens_label in ("ai_generated", "template_based")
+
+            # Top-5 importances from RF (most interpretable)
+            top5 = self._top5_importances()
+
+            reasons = self._generate_reasons(feats, heuristics, ens_label)
 
             return {
                 "is_ai_generated":   is_ai,
-                "label":             label,
-                "confidence":        _r4(confidence),
+                "label":             ens_label,
+                "confidence":        _r4(ens_conf),
                 "reasons":           reasons,
                 "features":          feats,
-                "feature_importances": {k: _r4(v) for k, v in top5.items()},
+                "feature_importances": top5,
+                # Per-model breakdown
+                "model_results": {
+                    "random_forest": {
+                        "label":      rf_result.get("label", "?"),
+                        "confidence": _r4(rf_result.get("confidence", 0.0)),
+                        "probabilities": {
+                            _LABEL_MAP[i]: _r4(float(rf_proba[i]))
+                            for i in range(len(rf_proba))
+                        },
+                    },
+                    "xgboost": {
+                        "label":      xgb_result.get("label", "unavailable"),
+                        "confidence": _r4(xgb_result.get("confidence", 0.0)),
+                        "probabilities": (
+                            {
+                                _LABEL_MAP[i]: _r4(float(xgb_proba[i]))
+                                for i in range(len(xgb_proba))
+                            }
+                            if self._xgb is not None else {}
+                        ),
+                        "available": self._xgb is not None,
+                    },
+                    "ensemble": {
+                        "label":      ens_label,
+                        "confidence": _r4(ens_conf),
+                        "method":     "soft_vote" if self._xgb is not None else "rf_only",
+                        "probabilities": {
+                            _LABEL_MAP[i]: _r4(float(ensemble_proba[i]))
+                            for i in range(len(ensemble_proba))
+                        },
+                    },
+                },
             }
 
         except Exception as e:
             print(f"[ResumeModel] Prediction error: {e}")
             return self._rule_based_fallback(text, heuristics)
 
-    # ── Reason generation ──────────────────────────────────────────────
+    # ── Internal helpers ───────────────────────────────────────────────────
 
     @staticmethod
-    def _generate_reasons(
-        feats: Dict[str, float],
-        heuristics: dict,
-        label: str,
-    ) -> List[str]:
-        reasons: List[str] = []
+    def _predict_single(clf: Any, X: Any, name: str) -> dict:
+        if clf is None:
+            return {"label": "unavailable", "confidence": 0.0, "_proba": np.array([0.34, 0.33, 0.33])}
+        try:
+            proba    = clf.predict_proba(X)[0]
+            pred_idx = int(np.argmax(proba))
+            return {
+                "label":      _LABEL_MAP.get(pred_idx, "human_written"),
+                "confidence": float(proba[pred_idx]),
+                "_proba":     proba,
+            }
+        except Exception as e:
+            print(f"[ResumeModel] {name} predict_single error: {e}")
+            return {"label": "error", "confidence": 0.0, "_proba": np.array([0.34, 0.33, 0.33])}
 
+    def _top5_importances(self) -> Dict[str, float]:
+        if self._rf is None:
+            return {}
+        importances = dict(zip(self._feature_names, self._rf.feature_importances_))
+        sorted_imp  = sorted(importances.items(), key=lambda x: x[1], reverse=True)
+        top5: Dict[str, float] = {}
+        for k, v in sorted_imp:
+            if len(top5) >= 5:
+                break
+            top5[k] = _r4(v)
+        return top5
+
+    @staticmethod
+    def _generate_reasons(feats: Dict[str, float], heuristics: dict, label: str) -> List[str]:
+        reasons: List[str] = []
         for feat_name, (direction, threshold, msg) in _THRESHOLDS.items():
             val = feats.get(feat_name)
             if val is None:
                 continue
-            if direction == "low" and val < threshold:
+            if direction == "low"      and val < threshold:
                 reasons.append(msg)
-            elif direction == "high" and val > threshold:
+            elif direction == "high"   and val > threshold:
                 reasons.append(msg)
             elif direction == "low_zero" and val == 0:
                 reasons.append(msg)
@@ -290,30 +387,20 @@ class ResumeModel:
 
         ppl = feats.get("perplexity", 0)
         if ppl and ppl > 80:
-            reasons.append(
-                f"High perplexity ({int(ppl)}): unpredictable text — human signal."
-            )
+            reasons.append(f"High perplexity ({int(ppl)}): unpredictable text — human signal.")
 
         if not reasons:
-            reasons.append(
-                f"Overall linguistic profile classified as: {label.replace('_', ' ')}."
-            )
+            reasons.append(f"Overall linguistic profile classified as: {label.replace('_', ' ')}.")
 
         return reasons
 
-    # ── Rule-based fallback ────────────────────────────────────────────
-
     @staticmethod
     def _rule_based_fallback(text: str, heuristics: dict) -> dict:
-        """Used when RF prediction fails; mirrors the original scoring logic."""
-        score  = 0.0
+        score   = 0.0
         reasons: List[str] = []
         feats: Dict[str, float] = {}
-
         try:
             feats = FeatureExtractor.extract_features(text)
-            feats["ai_phrase_match_count"]        = float(len(heuristics.get("matched_ai_phrases", [])))
-            feats["template_pattern_match_count"] = float(len(heuristics.get("matched_template_patterns", [])))
         except Exception:
             pass
 
@@ -325,27 +412,24 @@ class ResumeModel:
             reasons.append("Follows a generic template structure.")
         if feats.get("type_token_ratio", 0.5) < 0.4:
             score += 0.2
-            reasons.append("Low lexical diversity (repetitive vocabulary).")
-        if feats.get("sentence_length_std", 10.0) < 5.0:
-            score += 0.1
-            reasons.append("Very uniform sentence lengths (robotic flow).")
-
+            reasons.append("Low lexical diversity.")
         ppl = feats.get("perplexity", 100.0)
         if 0 < ppl < 40:
             score += 0.3
             reasons.append(f"Low perplexity ({int(ppl)}): AI signal.")
-        elif ppl > 80:
-            score -= 0.1
-            reasons.append(f"High perplexity ({int(ppl)}): human signal.")
 
         confidence = min(max(score, 0.0), 1.0)
         label      = "ai_generated" if confidence > 0.5 else "human_written"
-
         return {
-            "is_ai_generated":     confidence > 0.5,
-            "label":               label,
-            "confidence":          _r4(confidence),
-            "reasons":             reasons,
-            "features":            feats,
+            "is_ai_generated":   confidence > 0.5,
+            "label":             label,
+            "confidence":        _r4(confidence),
+            "reasons":           reasons,
+            "features":          feats,
             "feature_importances": {},
+            "model_results": {
+                "random_forest": {"label": label, "confidence": _r4(confidence), "probabilities": {}},
+                "xgboost":       {"label": "unavailable", "confidence": 0.0, "probabilities": {}, "available": False},
+                "ensemble":      {"label": label, "confidence": _r4(confidence), "method": "rule_based", "probabilities": {}},
+            },
         }
