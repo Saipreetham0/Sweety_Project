@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 uploads/
 nltk_data/
+.DS_Store

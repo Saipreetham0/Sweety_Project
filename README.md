@@ -13,11 +13,24 @@ Classifies a resume as **human-written**, **AI-generated**, or **template-based*
 
 ## Quick start
 
-### Docker (recommended)
-```bash
-docker-compose up --build
-```
-Frontend: http://localhost:3000 · API: http://localhost:8000
+### Docker (recommended: works on any Mac, Intel or Apple Silicon)
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and open it once so the engine is running.
+2. Copy the project folder to the Mac (or `git clone` it).
+3. From the project folder:
+   ```bash
+   docker compose up --build -d
+   ```
+   The first build downloads about 3 GB and takes roughly 10 minutes. Later starts take seconds. The frontend waits until the API reports healthy.
+4. Open http://localhost:3000 (API: http://localhost:8000).
+
+| Task | Command |
+|---|---|
+| Stop | `docker compose down` |
+| Start again | `docker compose up -d` |
+| Logs | `docker compose logs -f backend` |
+| Rebuild after code changes | `docker compose up --build -d` |
+
+Uploaded files are kept in `backend/uploads/` on the host. Python, Node and XGBoost don't need to be installed on the Mac; everything runs inside the containers.
 
 ### Manual
 ```bash

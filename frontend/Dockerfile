@@ -2,9 +2,14 @@
 FROM node:22-alpine AS builder
 
 WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY package.json package-lock.json* ./
-RUN npm install
+# NEXT_PUBLIC_* values are baked into the JS bundle at build time
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
 RUN npm run build
@@ -13,8 +18,8 @@ RUN npm run build
 FROM node:22-alpine AS runner
 
 WORKDIR /app
-
-ENV NODE_ENV production
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
 
 COPY --from=builder /app/package.json .
 COPY --from=builder /app/.next ./.next

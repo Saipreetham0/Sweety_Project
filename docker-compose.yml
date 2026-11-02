@@ -1,5 +1,3 @@
-
-
 services:
   backend:
     build: ./backend
@@ -8,18 +6,21 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/data:/app/data
-    restart: always
+      - ./backend/uploads:/app/uploads   # uploaded resumes stay on the host
+      - ./backend/data:/app/data         # drop Dataset A/B .xlsx here without rebuilding
+    restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # The browser calls this URL, so it must be reachable from the user's machine
+        NEXT_PUBLIC_API_URL: http://localhost:8000
     image: resume-ai-frontend
     container_name: resume-ai-frontend
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
-      - backend
-    restart: always
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

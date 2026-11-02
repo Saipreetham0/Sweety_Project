@@ -13,7 +13,11 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 # Import XGBoost BEFORE torch so its libomp loads first.
-import xgboost  # noqa: F401
+# Optional: if it's missing or libomp isn't installed, the API runs RF-only.
+try:
+    import xgboost  # noqa: F401
+except Exception as e:
+    print(f"[main] XGBoost unavailable ({e}); running Random Forest only.")
 
 from fastapi import FastAPI                          # type: ignore[import]
 from fastapi.middleware.cors import CORSMiddleware   # type: ignore[import]
