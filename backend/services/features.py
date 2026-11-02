@@ -1,4 +1,3 @@
-# MODIFIED
 """
 FeatureExtractor — computes all 25 stylometric, structural, neural, and
 heuristic-count features aligned to Dataset B "Stylometric Feature Vocabulary".
@@ -15,6 +14,12 @@ from typing import Any, Dict, List
 
 import numpy as np  # type: ignore[import]
 import textstat     # type: ignore[import]
+
+# Features shown in the UI/explanations but NOT fed to the classifier.
+# spaCy and DistilGPT2 may be absent in the training environment (and are
+# skipped during training), so feeding them to the model would mean
+# training on zeros and serving on real values.
+EXPLAIN_ONLY_FEATURES = frozenset({"perplexity", "noun_density", "adjective_density", "verb_density"})
 
 # ── Pyright-safe rounding helper ───────────────────────────────────────────
 # round(x, n) hits a Pyright overload-resolution bug when packages are in
@@ -51,6 +56,15 @@ else:
     print("[features] GPT-2 skipped (SKIP_GPT2=1).")
 
 # ── NLTK stopwords (function-word ratio) ───────────────────────────────────
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_LOCAL_NLTK = os.path.join(_BACKEND_DIR, "nltk_data")
+try:
+    import nltk  # type: ignore[import]
+    if os.path.exists(_LOCAL_NLTK) and _LOCAL_NLTK not in nltk.data.path:
+        nltk.data.path.insert(0, _LOCAL_NLTK)
+except Exception:
+    pass
+
 try:
     from nltk.corpus import stopwords as _sw  # type: ignore[import]
     _STOPWORDS: set = set(_sw.words("english"))
@@ -127,7 +141,6 @@ class FeatureExtractor:
         # Type-token ratio
         ttr: float = len(set(tokens_clean)) / n_tokens
         feats["type_token_ratio"] = _r4(ttr)
-        feats["lexical_richness"] = _r4(ttr)   # alias
 
         # Average word length
         feats["avg_word_length"] = _r4(
@@ -150,34 +163,24 @@ class FeatureExtractor:
         ))
         feats["passive_voice_ratio"] = _r4(passive / n_tokens)
 
-        # Sentence-level (Spacy or regex fallback)
+        # Sentence lengths: always regex, so training and serving match
+        sents  = re.split(r"[.!?]+", text)
+        slens  = [len(s.split()) for s in sents if s.strip()]
+        feats["avg_sentence_length"] = _r4(float(np.mean(slens)) if slens else 0.0)
+        feats["sentence_length_std"] = _r4(float(np.std(slens))  if slens else 0.0)
+
+        # POS densities via spaCy (explanation-only, see EXPLAIN_ONLY_FEATURES)
+        feats.update(FeatureExtractor._zero_spacy())
         if _nlp and not skip_spacy:
             try:
-                text_chunk: str = text[0:100000]  # type: ignore[index]
-                doc = _nlp(text_chunk)
-                sent_lens: List[int] = [len(list(s)) for s in doc.sents]
-
-                feats["avg_sentence_length"] = _r4(
-                    float(np.mean(sent_lens)) if sent_lens else 0.0
-                )
-                feats["sentence_length_std"] = _r4(
-                    float(np.std(sent_lens)) if sent_lens else 0.0
-                )
-
+                doc = _nlp(text[:100000])
                 pos_counts: Counter = Counter(tok.pos_ for tok in doc)
                 total: int = len(doc) or 1
                 feats["noun_density"]      = _r4(pos_counts.get("NOUN", 0) / total)
                 feats["adjective_density"] = _r4(pos_counts.get("ADJ",  0) / total)
                 feats["verb_density"]      = _r4(pos_counts.get("VERB", 0) / total)
-
             except Exception:
-                feats.update(FeatureExtractor._zero_spacy())
-        else:
-            sents  = re.split(r"[.!?]+", text)
-            slens  = [len(s.split()) for s in sents if s.strip()]
-            feats["avg_sentence_length"] = _r4(float(np.mean(slens)) if slens else 0.0)
-            feats["sentence_length_std"] = _r4(float(np.std(slens))  if slens else 0.0)
-            feats.update(FeatureExtractor._zero_spacy())
+                pass
 
         return feats
 
@@ -192,7 +195,7 @@ class FeatureExtractor:
 
         bullet_lines = [
             ln.strip() for ln in lines
-            if re.match(r"^\s*[•\-\*]\s+", ln)
+            if re.match(r"^\s*[•\-\*●▪▫✓➢❖\u2022\u25cf\u25aa\u25b6]\s*", ln)
         ]
         bullet_count = len(bullet_lines)
 
@@ -286,7 +289,7 @@ class FeatureExtractor:
     @staticmethod
     def _zero_stylometric() -> Dict[str, float]:
         return {
-            "type_token_ratio": 0.0, "lexical_richness": 0.0,
+            "type_token_ratio": 0.0,
             "avg_word_length": 0.0,  "function_word_ratio": 0.0,
             "comma_density": 0.0,    "passive_voice_ratio": 0.0,
             "avg_sentence_length": 0.0, "sentence_length_std": 0.0,
@@ -296,7 +299,7 @@ class FeatureExtractor:
     @staticmethod
     def _empty_features() -> Dict[str, float]:
         return {
-            "type_token_ratio": 0.0,     "lexical_richness": 0.0,
+            "type_token_ratio": 0.0,
             "avg_word_length": 0.0,      "function_word_ratio": 0.0,
             "comma_density": 0.0,        "passive_voice_ratio": 0.0,
             "avg_sentence_length": 0.0,  "sentence_length_std": 0.0,

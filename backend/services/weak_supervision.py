@@ -1,10 +1,8 @@
-# MODIFIED
 """
 WeakSupervision — loads AI phrases and template patterns from Dataset B
 (via load_datasets.py) instead of hardcoded lists.
 
-Backward-compatible: keeps uses_ai_phrases, has_template_structure, perfect_grammar.
-New keys: ai_phrase_score, matched_ai_phrases, template_score,
+Keys: uses_ai_phrases, has_template_structure,: ai_phrase_score, matched_ai_phrases, template_score,
           matched_template_patterns, weak_label, weak_confidence.
 """
 
@@ -24,14 +22,9 @@ _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_ROOT not in sys.path:
     sys.path.insert(0, _BACKEND_ROOT)
 
-try:
-    from data.load_datasets import load_ai_keywords, load_template_patterns
-except ImportError:
-    # Absolute fallback so the module never fails to load
-    def load_ai_keywords() -> List[Dict]:  # type: ignore[misc]
-        return []
-    def load_template_patterns() -> List[Dict]:  # type: ignore[misc]
-        return []
+# No fallback on purpose: a missing data/ package must fail loudly, not
+# silently run with zero phrases (which made every resume look human).
+from data.load_datasets import load_ai_keywords, load_template_patterns
 
 # Strength → float weight mapping
 _STRENGTH_WEIGHTS: Dict[str, float] = {
@@ -128,23 +121,14 @@ class WeakSupervision:
             "matched_template_patterns":  matched_tmpl,
             "weak_label":                 weak_label,
             "weak_confidence":            round(weak_confidence, 4),
-            # ── Backward-compat keys ───────────────────────────────────
-            "perfect_grammar":            False,
         }
 
     # ------------------------------------------------------------------ #
 
     @staticmethod
     def _check_structure(text_lower: str) -> bool:
-        """Legacy: True when all 4 canonical resume sections are present."""
-        required_sections = [
-            ["professional summary", "summary", "objective"],
-            ["skills", "core competencies", "technical skills"],
-            ["experience", "work history", "employment"],
-            ["education", "academic background"],
-        ]
-        found = sum(
-            1 for group in required_sections
-            if any(header in text_lower for header in group)
-        )
-        return found == 4
+        """Checks for explicit template placeholder structures like [Company Name], {Job Title}, etc."""
+        import re
+        has_placeholders = bool(re.search(r"\[(company|position|title|name|date|university|insert|achievement|city|state|degree)[^\]]*\]", text_lower))
+        has_declaration = ("hereby declare" in text_lower and "true to" in text_lower)
+        return has_placeholders or has_declaration

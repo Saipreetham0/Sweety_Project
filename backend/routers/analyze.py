@@ -1,44 +1,58 @@
-# MODIFIED
 """
 POST /analyze/{filename}
 
 Runs the full 4-step pipeline:
-  1. Text extraction
-  2. Preprocessing
+  1. Text extraction (PDF, DOCX, TXT)
+  2. Preprocessing (preserves structural layout for bullet/section detection)
   3. Weak supervision (heuristics from Dataset B)
-  4. Hybrid RF prediction (model trained on Dataset A)
-
-Returns an extended response including label (3-class), matched phrases,
-and feature importances. Duplicate "explanation" key bug from original is fixed.
+  4. Hybrid RF + XGBoost ensemble prediction
 """
 
-from fastapi import APIRouter, HTTPException
+from __future__ import annotations
+
 import os
+from fastapi import APIRouter, HTTPException, Query
 
 from services.extraction import TextExtractor
 from services.preprocessing import TextPreprocessor
 from services.weak_supervision import WeakSupervision
 from services.model import ResumeModel
 
-router     = APIRouter(prefix="/analyze", tags=["analyze"])
-UPLOAD_DIR = "uploads"
+router = APIRouter(prefix="/analyze", tags=["analyze"])
+
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+UPLOAD_DIR = os.path.join(_BACKEND_DIR, "uploads")
+# Uploads first, then the bundled sample corpus (used by the frontend's Quick Test buttons)
+_SEARCH_DIRS = [
+    UPLOAD_DIR,
+    os.path.join(_BACKEND_DIR, "data", "ai"),
+    os.path.join(_BACKEND_DIR, "data", "human"),
+]
 
 # Singletons — load once at startup so model weights are not reloaded per request
 _model = ResumeModel()
-_ws    = WeakSupervision()
+_ws = WeakSupervision()
 
 
 @router.post("/{filename}")
-def analyze_resume(filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
+def analyze_resume(filename: str, skip_perplexity: bool = Query(True)):
+    # basename() strips any directory component, so lookups stay inside _SEARCH_DIRS
+    safe_name = os.path.basename(filename)
+    file_path = next(
+        (p for p in (os.path.join(d, safe_name) for d in _SEARCH_DIRS) if os.path.isfile(p)),
+        None,
+    )
+    if not safe_name or file_path is None:
+        raise HTTPException(status_code=404, detail=f"File '{safe_name}' not found in uploads")
 
     # 1. Extraction
     try:
         text = TextExtractor.extract_from_file(file_path)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Extraction failed: {str(e)}")
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Extracted text is empty or unreadable.")
 
     # 2. Preprocessing
     clean_text = TextPreprocessor.clean_text(text)
@@ -47,12 +61,10 @@ def analyze_resume(filename: str):
     heuristics = _ws.apply_heuristics(clean_text)
 
     # 4. Hybrid ML Prediction
-    # skip_perplexity=True: DistilGPT2 was excluded from training features,
-    # so perplexity doesn't improve RF/XGB predictions and can cause hangs.
-    result = _model.predict(clean_text, heuristics, skip_perplexity=True)
+    result = _model.predict(clean_text, heuristics, skip_perplexity=skip_perplexity)
 
     return {
-        "filename":                  filename,
+        "filename":                  safe_name,
         "is_ai_generated":           result["is_ai_generated"],
         "label":                     result.get("label", "human_written"),
         "confidence":                result["confidence"],

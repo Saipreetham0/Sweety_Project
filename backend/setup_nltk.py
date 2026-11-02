@@ -1,4 +1,3 @@
-# NEW FILE
 """
 Run once to download required NLTK corpora:
     python setup_nltk.py

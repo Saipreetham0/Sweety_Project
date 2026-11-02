@@ -1,4 +1,3 @@
-# MODIFIED
 """
 ResumeModel — trains RandomForest + XGBoost on Dataset A (text files + Excel),
 caches both to disk, and returns ensemble + per-model predictions.
@@ -22,7 +21,7 @@ _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_ROOT not in sys.path:
     sys.path.insert(0, _BACKEND_ROOT)
 
-from services.features import FeatureExtractor
+from services.features import FeatureExtractor, EXPLAIN_ONLY_FEATURES
 
 def _r4(x: float) -> float:
     return float(f"{float(x):.4f}")
@@ -116,16 +115,26 @@ class ModelTrainer:
             rows.append(feats)
             labels.append(_LABEL_INT.get(label, 0))
 
-        feature_names: List[str] = list(rows[0].keys()) if rows else []
+        feature_names: List[str] = [k for k in rows[0] if k not in EXPLAIN_ONLY_FEATURES] if rows else []
         X = pd.DataFrame(rows, columns=feature_names).fillna(0.0).values
         y = np.array(labels)
 
         # ── Random Forest ─────────────────────────────────────────────
         from sklearn.ensemble import RandomForestClassifier  # type: ignore[import]
+        from sklearn.model_selection import StratifiedKFold, cross_val_score  # type: ignore[import]
 
         rf = RandomForestClassifier(
             n_estimators=200, random_state=42, class_weight="balanced"
         )
+
+        # Held-out estimate — train accuracy alone says nothing on ~30 samples.
+        k = min(5, int(np.bincount(y).min()))
+        if k >= 2:
+            cv = cross_val_score(rf, X, y, cv=StratifiedKFold(k, shuffle=True, random_state=42))
+            print(f"[ModelTrainer] RF  {k}-fold CV accuracy: {cv.mean():.3f} ± {cv.std():.3f} (n={len(y)})")
+        else:
+            print("[ModelTrainer] Too few samples per class for cross-validation.")
+
         rf.fit(X, y)
         rf_train_acc = float((rf.predict(X) == y).mean())
         print(f"[ModelTrainer] RF  Train Accuracy: {rf_train_acc:.3f} (n={len(y)})")
@@ -254,6 +263,9 @@ class ResumeModel:
     # ── Prediction ─────────────────────────────────────────────────────────
 
     def predict(self, text: str, heuristics: dict, skip_perplexity: bool = False) -> dict:
+        if self._rf is None and self._xgb is None:
+            return self._rule_based_fallback(text, heuristics)
+
         try:
             feats = FeatureExtractor.extract_features(text, skip_perplexity=skip_perplexity, skip_spacy=False)
             feats["ai_phrase_match_count"]        = float(len(heuristics.get("matched_ai_phrases", [])))
@@ -274,7 +286,33 @@ class ResumeModel:
             if self._xgb is not None:
                 ensemble_proba = (rf_proba + xgb_proba) / 2.0
             else:
-                ensemble_proba = rf_proba
+                ensemble_proba = np.array(rf_proba, dtype=float).copy()
+
+            # ── Weak supervision calibration ───────────────────────────
+            # Hybrid intelligence: integrate heuristic domain rules with statistical model
+            ai_score   = float(heuristics.get("ai_phrase_score", 0.0))
+            tmpl_score = float(heuristics.get("template_score", 0.0))
+            ai_count   = len(heuristics.get("matched_ai_phrases", []))
+            tmpl_count = len(heuristics.get("matched_template_patterns", []))
+
+            if ai_count >= 3 or ai_score >= 0.20:
+                # Strong AI phrase evidence
+                boost = min(0.15 + (ai_count * 0.05), 0.40)
+                ensemble_proba[1] += boost
+                ensemble_proba[0] = max(ensemble_proba[0] - boost * 0.7, 0.0)
+                ensemble_proba[2] = max(ensemble_proba[2] - boost * 0.3, 0.0)
+            elif tmpl_count >= 2 or tmpl_score >= 0.20:
+                # Strong template marker evidence
+                boost = min(0.20 + (tmpl_count * 0.05), 0.40)
+                ensemble_proba[2] += boost
+                ensemble_proba[0] = max(ensemble_proba[0] - boost * 0.7, 0.0)
+                ensemble_proba[1] = max(ensemble_proba[1] - boost * 0.3, 0.0)
+            # No phrase matches → no nudge: absence of listed phrases is not
+            # evidence of human writing, so the models decide on their own.
+
+            # Re-normalize probabilities
+            p_sum = float(np.sum(ensemble_proba)) or 1.0
+            ensemble_proba = ensemble_proba / p_sum
 
             ens_idx    = int(np.argmax(ensemble_proba))
             ens_conf   = float(ensemble_proba[ens_idx])
@@ -338,7 +376,10 @@ class ResumeModel:
         if clf is None:
             return {"label": "unavailable", "confidence": 0.0, "_proba": np.array([0.34, 0.33, 0.33])}
         try:
-            proba    = clf.predict_proba(X)[0]
+            raw = clf.predict_proba(X)[0]
+            # Map onto all 3 labels even if training data lacked a class
+            proba = np.zeros(len(_LABEL_MAP))
+            proba[np.asarray(getattr(clf, "classes_", range(len(raw))), dtype=int)] = raw
             pred_idx = int(np.argmax(proba))
             return {
                 "label":      _LABEL_MAP.get(pred_idx, "human_written"),
@@ -368,9 +409,13 @@ class ResumeModel:
             val = feats.get(feat_name)
             if val is None:
                 continue
-            if direction == "low"      and val < threshold:
+            if feat_name == "perplexity" and (val <= 0.0 or val >= threshold):
+                continue
+            if feat_name in ("first_person_count", "informal_word_count") and label == "human_written":
+                continue
+            if direction == "low" and val < threshold:
                 reasons.append(msg)
-            elif direction == "high"   and val > threshold:
+            elif direction == "high" and val > threshold:
                 reasons.append(msg)
             elif direction == "low_zero" and val == 0:
                 reasons.append(msg)
@@ -404,22 +449,43 @@ class ResumeModel:
         except Exception:
             pass
 
-        if heuristics.get("uses_ai_phrases"):
-            score += 0.4
-            reasons.append("Contains AI-generated phrases.")
-        if heuristics.get("has_template_structure"):
-            score += 0.2
-            reasons.append("Follows a generic template structure.")
+        ai_phrases = heuristics.get("matched_ai_phrases", [])
+        if len(ai_phrases) >= 3:
+            score += 0.65
+            reasons.append(f"Multiple AI-generated phrases detected ({len(ai_phrases)} matched).")
+        elif len(ai_phrases) >= 1:
+            score += 0.40
+            reasons.append(f"Contains AI-generated phrases ({', '.join(ai_phrases[:3])}).")
+
+        tmpl_patterns = heuristics.get("matched_template_patterns", [])
+        if len(tmpl_patterns) >= 4:
+            score += 0.65
+            reasons.append(f"Heavy resume template placeholders detected ({len(tmpl_patterns)} patterns).")
+        elif len(tmpl_patterns) >= 2:
+            score += 0.45
+            reasons.append(f"Template placeholder patterns detected ({len(tmpl_patterns)} patterns).")
+        elif len(tmpl_patterns) == 1 or heuristics.get("has_template_structure"):
+            score += 0.20
+            reasons.append("Contains template placeholders or generic layout.")
+
         if feats.get("type_token_ratio", 0.5) < 0.4:
-            score += 0.2
+            score += 0.15
             reasons.append("Low lexical diversity.")
+
         ppl = feats.get("perplexity", 100.0)
         if 0 < ppl < 40:
             score += 0.3
             reasons.append(f"Low perplexity ({int(ppl)}): AI signal.")
 
         confidence = min(max(score, 0.0), 1.0)
-        label      = "ai_generated" if confidence > 0.5 else "human_written"
+        if len(tmpl_patterns) >= 2 and confidence >= 0.5:
+            label = "template_based"
+        elif confidence > 0.5:
+            label = "ai_generated"
+        else:
+            label = "human_written"
+            if not reasons:
+                reasons.append("Writing style exhibits natural human variation.")
         return {
             "is_ai_generated":   confidence > 0.5,
             "label":             label,

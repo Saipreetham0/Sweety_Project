@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -13,8 +13,9 @@ COPY requirements.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download Spacy model
-RUN python -m spacy download en_core_web_sm
+# Download Spacy model and NLTK corpora
+RUN python -m spacy download en_core_web_sm && \
+    python -m nltk.downloader stopwords punkt averaged_perceptron_tagger
 
 # Copy application code
 COPY . .
