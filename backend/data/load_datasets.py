@@ -96,7 +96,24 @@ _DEFAULT_TEMPLATE_PATTERNS: List[Dict[str, str]] = [
     {"phrase": "i hereby declare that all information", "signal_strength": "very high"},
     {"phrase": "curriculum vitae", "signal_strength": "medium"},
     {"phrase": "seeking a challenging position in a reputed organization", "signal_strength": "very high"},
-    {"phrase": "career objective:", "signal_strength": "medium"},
+    {"phrase": "career objective", "signal_strength": "medium"},
+    # Boilerplate wording of filled-in CV templates (no brackets needed)
+    {"phrase": "hereby declare", "signal_strength": "very high"},
+    {"phrase": "true to the best of my knowledge", "signal_strength": "high"},
+    {"phrase": "languages known", "signal_strength": "high"},
+    {"phrase": "father's name", "signal_strength": "high"},
+    {"phrase": "marital status", "signal_strength": "high"},
+    {"phrase": "date of birth", "signal_strength": "medium"},
+    {"phrase": "nationality", "signal_strength": "medium"},
+    {"phrase": "personal details", "signal_strength": "medium"},
+    {"phrase": "challenging environment", "signal_strength": "high"},
+    {"phrase": "utilize my skills", "signal_strength": "high"},
+    {"phrase": "growth of the organization", "signal_strength": "high"},
+    {"phrase": "development of the organization", "signal_strength": "high"},
+    {"phrase": "quick learner", "signal_strength": "medium"},
+    {"phrase": "good communication skills", "signal_strength": "medium"},
+    {"phrase": "to obtain a position", "signal_strength": "medium"},
+    {"phrase": "place:", "signal_strength": "medium"},
     {"phrase": "declare that the above mentioned information is true", "signal_strength": "very high"},
     {"phrase": "lorem ipsum dolor sit amet", "signal_strength": "very high"},
     {"phrase": "[insert skill]", "signal_strength": "very high"},
@@ -197,6 +214,7 @@ def load_training_data() -> pd.DataFrame:
     for label, d in (
         ("human_written", os.path.join(_BACKEND_DIR, "data", "human")),
         ("ai_generated",  os.path.join(_BACKEND_DIR, "data", "ai")),
+        ("template_based", os.path.join(_BACKEND_DIR, "data", "template")),
     ):
         if not os.path.isdir(d):
             continue

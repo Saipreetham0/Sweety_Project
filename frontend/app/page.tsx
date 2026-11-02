@@ -353,6 +353,12 @@ export default function Home() {
           >
             <CheckCircle className="w-3.5 h-3.5" /> Sample Human Resume
           </button>
+          <button
+            onClick={() => loadPreset("Template_Candidate_1.txt")}
+            className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-900/60 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 font-medium"
+          >
+            <LayoutTemplate className="w-3.5 h-3.5" /> Sample Template Resume
+          </button>
         </div>
       </header>
 

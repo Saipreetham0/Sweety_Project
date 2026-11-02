@@ -27,6 +27,7 @@ _SEARCH_DIRS = [
     UPLOAD_DIR,
     os.path.join(_BACKEND_DIR, "data", "ai"),
     os.path.join(_BACKEND_DIR, "data", "human"),
+    os.path.join(_BACKEND_DIR, "data", "template"),
 ]
 
 # Singletons — load once at startup so model weights are not reloaded per request
