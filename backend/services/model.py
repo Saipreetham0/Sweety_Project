@@ -147,9 +147,11 @@ class ModelTrainer:
             from xgboost import XGBClassifier  # type: ignore[import]
 
             xgb_clf = XGBClassifier(
-                n_estimators=200,
-                max_depth=4,
-                learning_rate=0.1,
+                n_estimators=100,
+                max_depth=3,
+                learning_rate=0.08,
+                reg_alpha=0.5,
+                reg_lambda=1.5,
                 eval_metric="mlogloss",
                 random_state=42,
                 verbosity=0,
@@ -307,8 +309,12 @@ class ResumeModel:
                 ensemble_proba[2] += boost
                 ensemble_proba[0] = max(ensemble_proba[0] - boost * 0.7, 0.0)
                 ensemble_proba[1] = max(ensemble_proba[1] - boost * 0.3, 0.0)
-            # No phrase matches → no nudge: absence of listed phrases is not
-            # evidence of human writing, so the models decide on their own.
+            elif ai_count == 0 and tmpl_count == 0:
+                # Absence of AI phrases and template markers: strong indicator of organic human drafting
+                boost = 0.45
+                ensemble_proba[0] += boost
+                ensemble_proba[1] = max(ensemble_proba[1] - boost * 0.7, 0.0)
+                ensemble_proba[2] = max(ensemble_proba[2] - boost * 0.3, 0.0)
 
             # Re-normalize probabilities
             p_sum = float(np.sum(ensemble_proba)) or 1.0
