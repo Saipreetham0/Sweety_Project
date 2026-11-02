@@ -1,8 +1,16 @@
 # Backend
 backend/venv/
+backend/nltk_data/
 backend/__pycache__/
-backend/*.pyc
-backend/data/
+backend/*/__pycache__/
+backend/*/*/__pycache__/
+**/__pycache__/
+*.pyc
+
+# User uploads (may contain personal data) — never commit
+backend/uploads/
+backend/data/*.xlsx
+backend/data/*.csv
 
 # Frontend (Standard Next.js ignored are usually in frontend/.gitignore, but adding here just in case)
 frontend/node_modules/
